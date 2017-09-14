@@ -50,17 +50,26 @@ gitにやってもらう。
 sourceディレクトリに移動して
 
 ```shell-session:git
+
 git config --global user.email メールアドレス
 git config --global user.name ユーザ名
+git init
+git remote add origin リモートリポジトリURLを指定
+
 git add .
 git commit -m "first update"
-git remote add origin リモートリポジトリURLを指定
 git push -u origin master
 ```
 
-使うときは
+使うとき（読み込み）は
 ` git pull `
 
+リモートリポジトリを更新したい時（保存）は
+```
+git add .
+git commit -m "message"
+git push -u origin master
+```
   
 
 
