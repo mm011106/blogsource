@@ -1,0 +1,224 @@
+---
+layout: post
+title: "WebCamをつなげてみる"
+date: 2015-01-25 09:20:05 +0900
+comments: true
+categories: [Raspi, webcam]
+---
+
+今回はwebカムの接続を試して見ました。いろいろ話を聞いていると、データロガーが提示するデータだけでは情報が足りない、ということが多かったです。せっかくオンラインにするなら、写真とか「雰囲気」を伝えてくれるとありがたい、という意見が多かったです。言われてみれば、データだけなら今までのシステムでもできるし、とおもいましたので絵も転送できるようなケイパビリティを持たせたいなと思った次第。
+
+<!-- more -->
+
+webカムはRaspberry Piに接続できるのかどうか調べてみると、意外と簡単に接続できそうです。一昔前は結構苦労していたように感じたので、時代は進んだなあと。
+
+で、キャプチャするソフトをリストアップしてみると。
+
+- fswebcam　スチル撮影
+- motion　画像の変化を検出して記録
+- guvcview 動画のキャプチャ（GUI必要？）
+
+と言ったところが皆さんに使われているようです。特に監視カメラ用途ではmotionが便利そうです。
+
+今回は、能動的にシャッターを切って記録する用途ですので、fswebcamを使うことにしました。
+
+---
+###USBカメラを接続してみる
+
+
+とりあえずUSBカメラを何も考えずRaspberry Piにつないでみます。
+
+認識されているか確認してみると
+
+```sh UBS device list
+$ lsusb
+Bus 001 Device 002: ID 0424:9514 Standard Microsystems Corp. 
+Bus 001 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub
+Bus 001 Device 003: ID 0424:ec00 Standard Microsystems Corp. 
+Bus 001 Device 006: ID 046d:080a Logitech, Inc. Portable Webcam C905
+```
+
+こんなかんじで認識されています。
+
+次に、fswebcamをインストール。参考にしたのは[こちら](http://www.raspberrypi.org/documentation/usage/webcams/)
+
+続けて試し撮りなどしてみます。
+
+```sh install fswebcam
+$ sudo apt-get install fswebcam
+
+$ fswebcam -v   #こうすると色々教えてくれます。
+--- Opening /dev/video0...
+Trying source module v4l2...
+/dev/video0 opened.
+src_v4l2_get_capability,87: /dev/video0 information:
+src_v4l2_get_capability,88: cap.driver: "uvcvideo"
+src_v4l2_get_capability,89: cap.card: "UVC Camera (046d:080a)"
+src_v4l2_get_capability,90: cap.bus_info: "usb-bcm2708_usb-1.4"
+src_v4l2_get_capability,91: cap.capabilities=0x84000001
+src_v4l2_get_capability,92: - VIDEO_CAPTURE
+src_v4l2_get_capability,103: - STREAMING
+No input was specified, using the first.
+src_v4l2_set_input,181: /dev/video0: Input 0 information:
+src_v4l2_set_input,182: name = "Camera 1"
+src_v4l2_set_input,183: type = 00000002
+src_v4l2_set_input,185: - CAMERA
+src_v4l2_set_input,186: audioset = 00000000
+src_v4l2_set_input,187: tuner = 00000000
+src_v4l2_set_input,188: status = 00000000
+src_v4l2_set_pix_format,541: Device offers the following V4L2 pixel formats:
+src_v4l2_set_pix_format,554: 0: [0x56595559] 'YUYV' (YUV 4:2:2 (YUYV))
+src_v4l2_set_pix_format,554: 1: [0x47504A4D] 'MJPG' (MJPEG)
+Using palette MJPEG
+Adjusting resolution from 384x288 to 352x288.
+src_v4l2_set_mmap,693: mmap information:
+src_v4l2_set_mmap,694: frames=4
+src_v4l2_set_mmap,741: 0 length=102400
+src_v4l2_set_mmap,741: 1 length=102400
+src_v4l2_set_mmap,741: 2 length=102400
+src_v4l2_set_mmap,741: 3 length=102400
+--- Capturing frame...
+verify_jpeg_dht,94: Inserting DHT segment into JPEG frame.
+Captured frame in 0.00 seconds.
+--- Processing captured image...
+There are unsaved changes to the image.
+
+$ fswebcam -r 1000 ./test.jpg
+--- Opening /dev/video0...
+Trying source module v4l2...
+/dev/video0 opened.
+No input was specified, using the first.
+Adjusting resolution from 1000x-1 to 960x720.
+--- Capturing frame...
+Captured frame in 0.00 seconds.
+--- Processing captured image...
+Writing JPEG image to './test.jpg'.
+
+```
+
+上の例では解像度1000pxぐらいの絵をとってtest.jpgで保存してもらう例です。実際にはカメラの撮影可能な解像度に適宜調整されるようです。
+
+撮影したのはいいですが、このままでは本当にとれているのか絵を觀ることができないので判りません。scpなどのコマンドで転送してもいいですが、すぐにMQTTで転送することを考えなきゃいけないので、とりあえず手動でmosquittoを使って転送してみます。
+
+プロトコルとしては、どんなファイルでも（中身に関係なく）送れるのですが、mosquittoはコマンドラインということもあり、メッセージをサブスクライブしたときペイロードの内容を出力したあと改行コードを出力してしまいます。文字情報の時は便利なのですが、バイナリのときはちょっと厄介です。  
+それを抑止するために-N オプションがあり、これを使うとバイナリファイルも比較的扱いやすくなるはずです。
+
+これを試してみます。
+
+```sh binary file subscription via MQTT
+#サブスクライブ側を用意
+$ mosquitto_sub -N -h MY.BROKER -t MY/DEVICE/photo > test.jpg
+
+#写真をとったエッジデバイス側でファイルまるごとパブリッシュ
+$ mosquitto_pub -h MY.BROKER -t MY/DEVICE/photo -f ./test.jpg
+
+```
+
+このあと、サブスクライブ側をCtrl−Cで中断して、サブスクライブしたtest.jpgを確認してください。
+
+手動で中断しないといけないのが、イマイチですが一応転送はできます。
+
+スクリプトによる写真データのサブスクリプションは、mosquitto_subでは対処しきれない感じがします。
+ここは、paho版の出番になりそうですね。(もちろん、mosquittoのライブラリをつかってCで書いてもいいのですけど、わたしはCができませんので。。。。)
+
+##おまけ
+
+このままじゃあまり役立たないので、webサーバを動かして写真を配信する設定を試して見ました。
+こちらの[ページ](http://nofx2.txt-nifty.com/it/2013/07/raspberry-pi-ng.html)丸写しです。ありがとうございます。
+
+webサーバにはいまどきの、nginxを選びました。apacheは昔苦労した記憶があり、めんどくさいし時間がかかりそうというイメージでしたので今時流行りを。
+
+```sh install nginx
+# Nginxインストール
+$ sudo apt-get install nginx
+# 1.2.1-2.2+wheezy3がインストールされました。
+
+# web page 用ディレクトリの作成
+$ cd ~
+$ mkdir www
+
+# Nginxの設定の変更
+$ sudo vi /etc/nginx/sites-available/default
+# 設定フアイルは/etc/nginx/nginx.confにもありますが、
+#　ここらへんの使い分けはよくわかっていません。
+# server {　}
+#   の中にある公開するweb pageディレクトリを先ほど作ったディレクトリに変更します
+
+    #root /usr/share/nginx/www;
+    root /home/pi/www;
+
+
+# サイトを有効にするため、シンボリックリンクを張る。
+$ sudo ln -s /etc/nginx/sites-available/pi /etc/nginx/sites-enabled/
+#  ここらへんは詳細不明です。
+#　多分これがなくても先ほどの設定変更はdefaultに対して行ったので、
+#　有効になると思います。
+#　すでに、/etc/nginx/sites-enabled/には
+#  /etc/nginx/sites-available/defaultのリンクが置かれていました。
+
+# Nginxの設定ファイルに問題が無いかチェック
+$ sudo nginx -t
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+# Nginx再起動
+$ sudo service nginx restart
+
+# 自動起動設定
+$ sudo update-rc.d nginx defaults
+
+# index.htmlの作成
+#　とりあえず、nginxの初期設定のindex.htmlをコピー
+
+cp /usr/share/nginx/www/index.html ~/www/
+
+```
+
+ここまでできたら、webサーバにアクセスしてみてください。
+なにか反応があるはずです。
+
+次に、とった写真を見れるようにします。
+
+###　写真入りindex.htmlを用意
+
+
+```sh
+$ vi ~/www/index.html
+<html>
+<head>
+<title>Welcome to nginx!</title>
+</head>
+<body bgcolor="white" text="black">
+<center><h1><img src="./test.jpg" alt="test picture" ></h1></center>
+</body>
+</html>
+
+# 写真をとってwwwディレクトリに入れてみます。
+
+$ fswebcam ~/www/test.jpg
+```
+
+
+ここでwebをアクセスすると写真が見えるはずです。
+
+一段落。
+
+さて、このファイルはフラッシュメモリ上に展開されているので、あまり派手に何回もとっては消しをすると、あっという間にフラッシュメモリが使えなくなります。そこで、ramdiskを写真の置き場に使うことにします。
+webサーバは指定したwebページ保存場所以外のファイルは読めないようなので、最初にramdisk上の写真ファイルのリンクをwwwディレクトリ上に作っておきます。
+
+```
+$ ln -s /run/shm/picture.jpg ~/www/test.jpg 
+# /run/shmのディレクトリはRAM-DISKになっています。
+
+$ fswebcam /run/shm/picture.jpg
+#　これでwebページ上の写真が、今撮ったものに変わるはずです。
+
+```
+
+ここまで来ると、立派な定点カメラの出来上がり、という感じです。
+
+MQTTのサブスクライバをつければ、シャッタや解像度のコントロールがMQTT経由でできますね。
+
+
+
+

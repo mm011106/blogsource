@@ -1,0 +1,61 @@
+---
+layout: post
+title: "引用のフォントサイズ"
+date: 2014-12-31 14:36:58 +0900
+comments: true
+categories: [octopress] 
+---
+
+以前から、ブログの「引用」のフォントサイズがでかいなあと思っていたのですが、何とか直せたのでメモ。
+<!-- more -->
+
+まずは、引用ってなんていうタグ？というところから開始。
+
+firefoxにはWEB開発用にスタイルシートやhtmlのソースとwebページを対比させながら表示する開発モードがあるので、これを使いながらタグを調べました。    
+その結果、<blockquote\>ということがわかり、今度はoctopressのスタイルシートの元を検索。結果`_typography.scss`にその設定がありました。
+
+引用しておくと
+
+```css _typography.scss
+blockquote {
+  $bq-margin: 1.2em;
+  font-style: italic;
+  position: relative;
+  font-size: 1.2em;
+  line-height: 1.5em;
+  padding-left: 1em;
+  border-left: 4px solid rgba($text-color-light, .5);
+  cite {
+    font-style: italic;
+    a { color: $text-color-light !important; word-wrap: break-word; }
+    &:before { content: '\2014'; padding:{right: .3em; left: .3em;} color: $text-color-light; }
+  }
+  @media only screen and (min-width: 992px) {
+    padding-left: 1.5em;
+    border-left-width: 4px;
+  }
+}
+```
+
+
+ここに`font-size: 1.2em;`と指定があるため、文字が他と比べて大きく表示されているように思えましたので、これを上書きすることにします。
+
+具体的には`sass/custom/_styles.scss`に下記内容を追記しています。
+
+
+```css added lines on _styles.scss
+blockquote {
+  font-size: 1.0em;
+}
+```
+
+これで、本文と同じ程度の大きさのフォントになり、見やすくなりました。
+
+ちなみに、本文のフォントサイズは結局以下のようにして小さくしています。
+
+```css change the body font size
+body {
+     font-size: 0.9em;
+} 
+```
+

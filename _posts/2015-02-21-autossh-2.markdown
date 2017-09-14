@@ -1,0 +1,379 @@
+---
+layout: post
+title: "autosshでポートフォワード"
+date: 2015-02-21 18:16:46 +0900
+comments: true
+categories: autossh
+---
+以前、ポーフォワードを[autosshで設定する](http://mm011106.github.io/blog/2015/01/12/autossh/)というのをやりましたが、今回はそれをもう少しまとめてみました。  
+起動スクリプトの理解を少し深めて、さらにポートフォワード用のユーザを作ってそこで実行するようにして見ました。
+
+<!-- more -->
+
+##何をするのか？
+今回の目標は、エッジデバイス側の暗号化経路を確立するために、システム起動時にサーバ（ここではブローカ）にsshでポートフォワードを設定することです。
+さらにセキュリティ向上を目指して、ポートフォワードのプロセスを起動する専用のユーザを設定しています。
+
+手順としては、
+
+- ユーザを作る
+- そのユーザ上にsshのconfigファイルを設定
+- パスフレーズなしの鍵を作る
+- 接続テスト
+- init.d用スクリプトを作成〜登録
+- 起動テスト
+
+となりました。
+
+以下のパラメタを決定しておきます。
+()内には、この例での値を書いておきます。
+
+- サーバ名(mybroker)
+- サーバのアカウント名(pipipi)
+- サーパのsshポート(sshport)
+- サーバのMQTTポート(1883)
+- パスフレーズなしの鍵 (mqttclient_key)
+- ローカルのMQTT用ポート(22883)
+- ポートフォワード用ユーザ(pfuser)
+
+ハードウエアはRaspberry Pi、OSはRaspbianを想定しています。
+
+##ポートフォワード用ユーザを作成
+
+まずは、ポートフォワード用ユーザを作ります。
+
+```sh
+ $ sudo useradd -m pfuser
+```
+
+このオプションだとユーザのホームディレクトリだけが作成されます。パスワードが設定されていませんので、ログインできない状態（ロック状態）となっています。  
+ユーザ設定のデフォルト値は`useradd -D`で表示できるようですので、確認しておきましょ。
+
+このユーザにはログインできない状態のはずです。一応、外からsshで接続してみます。。。。  
+やはりできませんね。ok  
+さらに、コマンドからユーザの設定を確認しておきます。
+
+```sh
+ $ passwd -S pfuser
+pfuser L 02/21/2015 0 99999 7 -1
+```
+
+2番目にLとありますが、これがロックされているアカウント、という意味のようです。  
+
+次に、作ったユーザのホームディレクトリに以下のものを作ります。
+
+- パスフレーズなしの鍵
+- ssh用のconfiファイル作成
+
+##パスフレーズなしの鍵を作る
+他のユーザで鍵を作ってコピーしてもいいですが、ユーザ名の変更とかしなきゃいけない(`chown usr:grp`)ので、素直にポートフォワード用ユーザ(pfuser)に移動して鍵を作ります。
+
+```sh
+$ sudo su - pfuser
+# 今のユーザからpfuser（今作ったポートフォワード用ユーザ）に移動
+# '-' optionでログインしたのと同じ状態
+#  （ホームに移動して環境変数も初期化される）になる
+
+$ mkdir .ssh
+$ cd .ssh
+$ ssh-keygen -f mqttclient_key 
+# パスフレーズを入力するように言われますが、ただenterを押してやることで
+# パスフレーズなしの鍵ができます
+```
+
+(以後しばらくこのユーザで作業します。)
+
+作った鍵の公開鍵の方を(`mqttclient_key.pub`)をサーバ側にコピーします。
+
+```sh
+$ scp -P sshport ./mqttclient_key.pub pipipi@mybroker:~/.ssh/
+$ ssh pipipi@mybroker
+mybroker $ echo -n 'no-pty,permitopen="localhost:1883",command="/bin/false" ' >> authorized_keys
+# これは、パスフレーズなしの鍵でログインした場合の動作を制限するおまじないです。
+mybroker $ cat .ssh/mqttclient_key.pub >> authorized_keys 
+# 鍵を登録します
+mybroker $ exit
+```
+
+これで、サーバに鍵を登録しましたので、試しに接続してみます。
+
+```sh
+$ ssh -i ~/.ssh/mqttclient_key pipipi@mybroker
+PTY allocation request failed on channel 0
+Connection to xxx.xxx.xxx.xxx closed.
+```
+
+となれば成功です。これは、先程の鍵の登録の時のおまじないで、コンソールが開かないようにno-ptyでオフにしたこと、またコマンド入力を受け付けないようにシェルを空のシェルプログラムにしたことでコネクションがフェイルしているためです。
+
+## sshの設定ファイルを作る
+次に、sshのポートフォワード設定ファイルをつくります。コマンドラインからすべてのパラメタを入れてもいいのですけれど、結構長くなってしまうのと、psでプロセスを表示した時にパラメタが全部見えてしまうのでなんとなく気持ち悪いのでこうします。
+
+viなどのエディタで以下のような内容のファイルを`~/.ssh/config`として作ります。
+
+```sh
+#
+#  MQTT portforwarding config
+#
+
+ServerAliveInterval   30
+ServerAliveCountMax   3
+
+StrictHostKeyChecking  no
+
+Host Broker
+  HostName        mybroker
+  IdentityFile    /home/pfuser/.ssh/mqttlient_key
+  User            pipipi
+  LocalForward    22883 localhost:1883
+  Port            sshport 
+```
+
+このようにすることで、sshのマンドオプションに'Broker'と指定するだけで接続できるようになります。
+
+最初の2行の設定は、コネクションを確認するための設定で、  
+
+>30秒に1回コネクションがあることを確認するためのパケットを送ります。もしこれが3回繰り返して通らない場合（コネクションがダウンしている場合）、接続を切ります。  
+
+という設定です。  
+
+つまり、これで30秒x3=1分30秒間連続してコネクションが切れていると、sshはダウンします。
+
+StrictHostKeyCheckingはクライアント側のknown_hostsに接続先の登録がないときに「ほんとに接続していいのかよ」と聞いてくるのを抑えます。このメッセージが出てしまうとスクリプトで実行した時にエラーで止まってしまいます。今回の場合は明示的に鍵をサーバにコピーしていますし、騙されたりして違うサーバに接続することはないと思うので、このように指定しました。
+
+Host以降は接続名に対応する設定を記入します。IdentityFileはフルパスのほうが後々トラブルが少ないとおもうので、そうしておきました。
+
+ここまでできたら、このconfigファイルを使って接続を試してみます。
+
+```sh
+$ ssh -f -N -F /home/pfuser/.ssh/config Broker
+```
+-f は起動後バックグラウンドに移動させるためのオプションです。-N は接続先でコマンドを起動しない設定です。  
+エラーせずプロンプトが帰ってくれば成功している可能性大です。psコマンドで確認してみます。
+
+```sh
+$ ps ax | grep 'ssh'
+ 3100 ?        S      0:00 ssh -f -N -F /home/pfuser/.ssh/config Broker
+```
+
+のように先のコマンドラインが出てくればokです。
+
+exitして元のユーザに戻っておきます。
+
+
+## init.d用のスクリプトを書く
+
+これがちょっと曲者なので、検索して[動きそうなスクリプト](http://files.bogosity.se/autossh_tunnel.foo)を探してきました。これに適宜必要な部分を書きたして見ました。
+
+ファイル名を`mqtt-pf`として下記の内容を`/etc/init.d/`に作成します。
+
+su でやる必要がありますので、念の為。
+
+[mqtt-pf](https://raw.githubusercontent.com/mm011106/mqtt-pf/master/mqtt-pf)
+
+```sh 
+#! /bin/sh
+### BEGIN INIT INFO
+# Provides:          mqtt-pf
+# Required-Start:    $syslog $network $all 
+# Required-Stop:     $syslog $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Port forward for MQTT protocol
+### END INIT INFO
+
+#
+# Author:	Andreas Olsson <andreas@arrakis.se>
+# Version:	@(#)autossh_tunnel.foo  0.1  27-Aug-2008  andreas@arrakis.se
+# modified :    13-Feb-2015 mqtt.and@gmail.com 
+#            
+#           
+# For each tunnel; make a uniquely named copy of this template.
+
+## SETTINGS
+#
+# specify a host name in ~/.ssh/config,
+# and also the ssh-key for connection must be located in ~/.ssh/
+TUNNEL="Broker"
+# You must use the real autossh binary, not a wrapper.
+DAEMON=/usr/lib/autossh/autossh
+#
+## END SETTINGS
+
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+NAME=`basename $0`
+# NAME is always including the extension of $0
+# the script should be named without extension for good looking
+PIDFILE=/var/run/${NAME}.pid
+SCRIPTNAME=/etc/init.d/${NAME}
+DESC="SSH Tunnel for MQTT protocol"
+
+# exit when test result = false
+test -x $DAEMON || exit 0
+
+export MQTT_PF_PIDFILE=${PIDFILE}
+ASOPT="-M 0 -N -F /home/pfuser/.ssh/config "${TUNNEL}
+
+#	Function that starts the daemon/service.
+#
+#  ssh command is not able to make a pid file with -f (force background) option.
+#  To obtain pid file properly, put --background, --make-pidfile option on the start-stop-deamon command,
+#    --background option is forcing ssh process started without -f option into background.
+
+d_start() {
+	start-stop-daemon --start --quiet --chuid pfuser:pfuser --user pfuser --background --pidfile $PIDFILE \
+		--make-pidfile --exec $DAEMON -- $ASOPT
+	if [ $? -gt 0 ]; then
+	    echo -n " not started (or already running)"
+	else
+	    sleep 1
+	    start-stop-daemon --stop --quiet --pidfile $PIDFILE \
+		--test --exec $DAEMON > /dev/null || echo -n " not started"
+	fi
+
+}
+
+#	Function that stops the daemon/service.
+d_stop() {
+	start-stop-daemon --stop --quiet --pidfile $PIDFILE \
+		--exec $DAEMON \
+		|| echo -n " not running"
+}
+
+
+case "$1" in
+  start)
+	echo -n "Starting $DESC: $NAME"
+	d_start
+	echo "."
+	;;
+  stop)
+	echo -n "Stopping $DESC: $NAME"
+	d_stop
+	echo "."
+	;;
+
+  restart)
+	echo -n "Restarting $DESC: $NAME"
+	d_stop
+	sleep 1
+	d_start
+	echo "."
+	;;
+  *)
+	echo "Usage: $SCRIPTNAME {start|stop|restart}" >&2
+	exit 3
+	;;
+esac
+
+exit 0
+
+
+
+```
+
+ファイルができたら、実行できるようにパーミッションを設定します。
+
+このスクリプトではautosshを起動しています。ssh をラップするコマンドで、sshを監視して、止まったら再起動するという事をしてくれます。基本的にsshコマンドが先のテストの時に動けば、問題なくautosshも起動できるはずです。
+
+最初のコメント欄では、このスクリプトの起動の順番を指定しています。
+
+- `# Provides:          mqtt-pf`
+  - このスクリプトの名前です
+- `# Required-Start:    $syslog $network $all`
+  - このスクリプトを起動するときに必要な環境（バーチャルファシリティ）を指定
+
+この指定がまたまた曲者で、うまく指定しないと起動してくれません。今回は色々試行錯誤して$allというファシリティを指定しました。すべての起動するべきスクリプトが実行されたあとに実行されるようになります。
+
+$networkだけだと、dhcpが実行される前に実行されたりしてうまく行きませんでした。
+
+実際にデーモンを起動するコマンド(start-stop-daemon)は以下のような設定になっています。
+
+- --chuid pfuser:pfuser
+  - ユーザ、グループIDを'pfuser、pfuser'で起動する
+- --user pfuser
+  - プロセスチェックするときのプロセスのユーザ指定(pfuserを指定）
+- --background 
+  - バックグラウンドに移行
+- --pidfile $PIDFILE 
+  - PIDを記録するファイルを指定
+- --make-pidfile 
+  - PID ファイルを作るように指定
+- --exec $DAEMON -- $ASOPT
+  - デーモンとして起動するコマンドとそれに渡すためのオプション
+
+通常は--make-pidfileと--backgroundは不要のようですが、一応つけてあります。
+コメントにもあるように、一部のコマンドはバックグラウンドに移行できないものがあり、それを強制するための--background オプションです。さらにこのオプションを指定した時にpidファイルが作られないことがあるそうなので、その対策として明示的にpidファイルをつるくように指定していています。
+
+autosshコマンドに渡しているオプションは以下のとおりです。
+
+- -M 0
+  - 接続が確立しているかどうかのチェックをするためのポート番号を指定
+  - 0はポートを使った接続チェックをしないで、sshコマンドが停止した時のみ再起動するという指定です。
+- -N
+  - これ以降のオプションはsshにそのまま渡されます。
+  - N　は接続先のコマンドを起動しない指定です。
+- -F /home/pfuser/.ssh/config 
+  - 設定ファイルの指定です。ユーザを指定しているので不要かもしれません。
+
+
+ここまでできたら、単体でこのスクリプトを動かしてみます。
+
+```sh
+$ sudo /etc/init.d/mqtt-pf start
+Starting SSH Tunnel for MQTT protocol: mqtt-pf.
+```
+
+と出てくれば成功です。
+
+`...not started.`
+
+となると失敗です。設定を見なおしてください。特にコメントで指定しているファシリティがきちんとしているか、pidができているか。など。  
+一応、このスクリプトは動作確認していますので、動くと思いますけど。。。。
+
+
+## rc.dに登録
+
+ここまで行けば、だいたい大丈夫だとおもいます。
+
+起動スクリプトの一部として、このポートフォワード設定を登録します。
+
+```sh
+$ sudo update-rc.d mqtt-pf defaults
+# として、登録
+
+$ ls /etc/rc2.d
+#　とすると、どの順番で起動することになるかがわかります。
+#  S04mqtt-pfというファイル名になっていれば大丈夫かとおもいます。
+```
+
+rc2.dのディレクトリにあるスクリプト（へのリンク）はランレベル２の時に起動/停止するデーモンのための起動/停止スクリプトです。
+
+Sで始まるスクリプトが起動用、Kで始まるスクリプトが停止用、番号が順番です。小さい方から順に実行されていきます。$allというファシリティを指定したので主要なスクリプトはすべて実行（起動）されたあとに起動されるようになっていて、大きめの番号が付いているはずです。
+
+ここまでくれば、あとはリブートするだけです。
+
+```sh
+$ sudo reboot
+```
+
+起動メッセージに
+
+` Starting SSH Tunnel for MQTT protocol: mqtt-pf.  `
+
+と出てくれば成功です。多分。
+ログインして、psで確認してみてください。
+
+ずっとうまく行ってて、再起動だけうまく行かないという時は、パーミッションや設定ファイルの指定がうまく行っていない場合が多いです。
+
+起動時はすべてrootで実行されますので、ユーザとして実行している状態とはちょっと違っています。そこら辺を気にかけながらデバグすると効率がいいかと思います。
+
+以上！
+
+ここまでたどり着くのに丸３日以上の時間がかかりました。。。。ユーザで実行してうまく起動するけれど、起動スクリプトに登録するとうまく動かない、というところで約２日を消費。あ〜、やっとできた。
+
+ポイントは「rootユーザが実行する」という点と「接続先からなにか聞かれる場合がある」という点です。
+
+おかげで、起動スクリプトは結構詳しくなりました。
+
+

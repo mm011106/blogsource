@@ -1,0 +1,77 @@
+---
+layout: post
+title: "mosquitto.conf 再び"
+date: 2014-12-06 19:58:41 +0900
+comments: true
+categories: [MQTT, mosquitto.conf]
+---
+
+昨日の、通信が途絶えている時にブローカがためておいてくれる件、`mosquitto.conf`にはこんなオプションがありました。
+
+- **max\_queued\_messages**
+
+<!-- more -->
+
+```sh
+# The maximum number of QoS 1 and 2 messages to hold in a queue 
+# above those that are currently in-flight.  Defaults to 100. Set 
+# to 0 for no maximum (not recommended).
+# See also queue_qos0_messages.
+#max_queued_messages 100
+```
+データ送信のキューに長さの最大を指定します。これ以上になったらどうなるのかなあ？古いやつから捨てられるのかしら？
+
+さらに max\_inflight\_messagesというのもあって、こちらは通信中(?)の最大メッセージ数を規定します。
+
+
+client IDの件に関連するオプションでこんなものもありました。
+
+- ** allow\_zero\_length\_clientid **
+
+```sh
+# This option controls whether a client is allowed to connect with a zero
+# length client id or not. This option only affects clients using MQTT v3.1.1
+# and later. If set to false, clients connecting with a zero length client id
+# are disconnected. If set to true, clients will be allocated a client id by
+# the broker. This means it is only useful for clients with clean session set
+# to true.
+#allow_zero_length_clientid true
+```
+
+client IDなしで接続できるかどうか、を設定するオプションかと思われます。ここに書いてあるようにIDを設定してしまうと、サブスクライブ接続を切った時に、それがテンポラリーなのかパーマネントなのかブローカは知る由がありません。そのため、同じIDで再接続されると切断されていた期間のデータが送られてきます。それは不要、という時もありますよね。。。。
+
+今のところの対処は、一度 QoS0で再接続してから切る、というのをやっています。こうすると次に接続した時は接続後の情報から入手できます。ほんとはもっといい手があるのかとも思いますが。
+
+ココらへんは、データアクイジションの側であれば、あとから不要な部分を切り取るとか、いかようにでも処理できるかと思います。コマンド系の接続では重要なポイントになりそうなので、考慮の必要がありそうですね。タイムスタンプを確認するとか。
+
+などと話していたら、こんなオプションがありました。
+
+- **persistent\_client\_expiration**
+
+```sh
+# This option allows persistent clients (those with clean session set to false)
+# to be removed if they do not reconnect within a certain time frame.
+#
+# This is a non-standard option in MQTT V3.1 but allowed in MQTT v3.1.1.
+#
+# Badly designed clients may set clean session to false whilst using a randomly
+# generated client id. This leads to persistent clients that will never
+# reconnect. This option allows these clients to be removed.
+#
+# The expiration period should be an integer followed by one of d w m y for
+# day, week, month and year respectively. For example
+#
+# persistent_client_expiration 2m
+# persistent_client_expiration 14d
+# persistent_client_expiration 1y
+#
+# The default if not set is to never expire persistent clients.
+#persistent_client_expiration
+```
+
+persistentは「しつこい」という意味らしいですが、長い接続は強制的に解除するということのようです。
+「ランダムのidを使っていながらclean session（切断時の送信データを破棄してもらうモード）をfalseで接続してくるたちの悪いクライアント」とありますね。そういう接続はしないように設計します。はい。
+
+
+
+

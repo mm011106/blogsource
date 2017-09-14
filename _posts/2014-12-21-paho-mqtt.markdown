@@ -1,0 +1,149 @@
+---
+layout: post
+title: "Paho MQTT のインストール"
+date: 2014-12-21 11:25:59 +0900
+comments: true
+categories: [mqtt, paho, python]
+---
+
+もうすこし細かくコントロールできるクライアントを作るべく、Pahoプロジェクトのクライアントをインストールすることにしました。  
+現状のテストデバイスは、シェルとmosquittoのクライアントで完成させるつもりですが、次はこちらに移行しようかとおもってます。  
+手順は、Pahoのページにも出ていますので、とても簡単。
+<!-- more -->
+
+インストールする前に、簡単にお勉強。
+
+Phao Projectとは一体何者？
+[Paho project](http://www.eclipse.org/paho/)
+>The Paho project provides scalable open-source client implementations of open and standard messaging protocols aimed at new, existing, and emerging applications for Machine‑to‑Machine (M2M) and Internet of Things (IoT). 
+
+>M2M、IoTへのアプリケーションに向けた、オープンで標準なメッセージングプロトコルの、スケーラブルでオープンソースのクライアント実装を提供するプロジェクトです。
+
+ということで、たしかにすごい広範囲のクライアント環境を提供しています。
+
+- ##MQTT Clients  
+	
+- ###C/C++  
+	Posix C / Windows C  
+	embedded systems  
+	Posix C++ / Windows C++  
+	embedded MQTT-SN 　　(MQTT-SN って何？？: このページの最後にメモ）
+
+- ###Java  
+	J2SE  
+	Android Service
+
+- ###JavaScript 
+
+- ###Python
+
+- ###Go Client
+
+- ###C\# .Net and WinRT
+
+- ###Utilities   
+	MQTT Conformance/Interoperability Testing
+
+
+
+で、目的のPython向けのクライアントモジュールは、
+
+[Python support:](http://www.eclipse.org/paho/clients/python/)
+>The Paho Python Client provides a client class with support for both MQTT v3.1 and v3.1.1 on Python 2.7 or 3.x.
+
+ということで、2.7と3.xの両方をサポートしているようです。
+
+ここまで確認した所で、インストールを始めました。
+
+```sh steps installing Paho-mqtt for Python
+$ python --version
+Python 2.7.3
+
+$ sudo apt-get install python-pip
+
+$ sudo pip install paho-mqtt
+
+$ cat paho-mqtt-test.py
+
+import paho.mqtt.client as mqtt
+
+# The callback for when the client receives a CONNACK response from the server.
+def on_connect(client, userdata, rc):
+    print("Connected with result code "+str(rc))
+	# Subscribing in on_connect() means that if we lose the connection and
+	# reconnect then subscriptions will be renewed.
+    client.subscribe("$SYS/#")
+
+# The callback for when a PUBLISH message is received from the server.
+def on_message(client, userdata, msg):
+    print(msg.topic+" "+str(msg.payload))
+
+client = mqtt.Client()
+client.on_connect = on_connect
+client.on_message = on_message
+
+client.connect("iot.eclipse.org", 1883, 60)
+
+# Blocking call that processes network traffic, dispatches callbacks and
+# handles reconnecting.
+# Other loop*() functions are available that give a threaded interface and a
+# manual interface.
+client.loop_forever()
+
+
+$ python ./paho-mqtt-test.py
+
+Connected with result code 0
+$SYS/broker/version mosquitto version 1.3.5
+..
+..
+$SYS/broker/uptime 1258785 seconds
+$SYS/broker/clients/total 2
+$SYS/broker/clients/inactive 1
+$SYS/broker/clients/active 1
+$SYS/broker/clients/maximum 2
+$SYS/broker/clients/expired 0
+$SYS/broker/messages/stored 72
+$SYS/broker/messages/received 80212
+$SYS/broker/messages/sent 65057
+$SYS/broker/subscriptions/count 2
+$SYS/broker/retained messages/count 50
+$SYS/broker/heap/current 12888
+$SYS/broker/heap/maximum 23872
+$SYS/broker/publish/messages/dropped 5069
+$SYS/broker/publish/messages/received 20949
+$SYS/broker/publish/messages/sent 5802
+$SYS/broker/publish/bytes/received 598854
+$SYS/broker/publish/bytes/sent 382692
+$SYS/broker/bytes/received 2003874
+$SYS/broker/bytes/sent 1025439
+.....
+
+
+```
+
+となりました。
+ここまで、10分かからず完了。
+
+先人に感謝。引き続き、巨人の肩の上で仕事させてもらいます。
+
+---
+[MQTT-SN](http://mqtt.org/new/wp-content/uploads/2009/06/MQTT-SN_spec_v1.2.pdf)
+
+MQTT For Sensor Networks
+
+だそうです。概略だけ、かいつまんでみると。
+
+> It is optimized for communications over networks where bandwidth is at a premium or where the network con-
+nection could be intermittent. However MQTT requires an underlying network, such as TCP/IP, that provides
+an ordered lossless connection capability and this is too complex for very simple, small footprint, and low-cost
+devices such as wireless SAs.
+The purpose of this document is to specify MQTT-SN, a pub/sub protocol for wireless sensor networks.
+MQTT-SN can be considered as a version of MQTT which is adapted to the peculiarities of a wireless commu-
+nication environment.
+
+>センサーネットワークのような、回線の費用がかかるような場所、しばしば回線が落ちるようなところに最適化されたMQTTプロトコルではありますが、小さなローコストのシンプルデバイスにとっては、複雑すぎるTCP/IPのようなロスレスのコネクションを基礎にしています。
+このドキュメントはワイヤレスセンサネットワークのためのパブリッシュ・サブスクライブプロトコルであるMQTT-SNの仕様を規定します。MQTT-SNはワイヤレスコミュニケーション環境の特色に特化したMQTTのバージョンだと考えられます。
+
+
+

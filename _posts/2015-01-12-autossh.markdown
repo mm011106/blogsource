@@ -1,0 +1,151 @@
+---
+layout: post
+title: "autossh"
+date: 2015-01-12 08:53:44 +0900
+comments: true
+categories: [ ssh, autossh, tunneling ]
+---
+
+
+
+sshのコネクションはどうしても切れてしまうことがあるので、それを阻止するためにautosshを使ってみました。  
+まず、sshのコマンドラインを簡素にするため、MQTTブローカへの接続設定を書いたconfigファイルを用意します。
+<!-- more -->
+
+sshのコンフィギュレーション
+
+まずは、sshの接続のコマンドラインを簡略化するためにconfigファイルを設定します。  
+設定を隠蔽できる（シェルスクリプトなどにパラメタを書かなくてもいい）というてんで良いかなと思います。
+
+```sh ~/.ssh/config
+Host Broker
+	HostName		MQTT_Broker
+	IdentityFile	~/.ssh/id_rsa_MQTTClient
+	User			MQTT_connection
+	LocalForward	22883 localhost:1883
+	Port			22222
+
+```
+
+ポート番号などは適宜設定してください。
+
+こうすることで、`ssh -f -N Broker`のコマンドでトンネリング設定ができます。
+ここで、公開鍵はパスフレーズ無しで作ったものを指定します。セキュリティのため、ブローカのssh設定にはポート制限やIP制限、コマンドを実行しないなどの処置を__必ず__とる必要があります。[設定の具体例](http://mm011106.github.io/blog/2015/01/11/secure-connection/)（「パスフレーズなしでの接続方法とセキュリティ設定」）
+
+さらに、これが切れたとき自動的に再接続するため、autosshを導入します。
+
+```sh
+ $ sudo apt-get install autossh
+```
+
+autosshを使ってトンネリングを設定するには
+```sh
+ $ autossh -M0 -f -N Broker
+```
+
+とします。
+
+\-M0 : 接続が切れているかどうかを確認するためのポート指定です。0は切断確認をポートではしないようにする設定です。
+
+\-f : 実行をバックグラウンドに移行します。
+
+\-N : sshへのオプションです。
+
+autosshはsshを起動してそのプロセスを監視するプロセスを起動するコマンドです。
+
+\-Mオプションについては以下のように[解説](http://linux.die.net/man/1/autossh)があります。
+
+>specifies the base monitoring port to use. Without the echo port, this port and the port immediately above it ( port + 1) should be something nothing else is using. autossh will send test data on the base monitoring port, and receive it back on the port above. For example, if you specify "-M 20000", autossh will set up forwards so that it can send data on port 20000 and receive it back on 20001.
+
+>Alternatively, a port for a remote echo service may be specified. This should be port 7 if you wish to use the standard inetd echo service. When an echo port is specified, only the specified monitor port is used, and it carries the monitor message in both directions.
+
+>Many people disable the echo service, or even disable inetd, so check that this service is available on the remote machine. Some operating systems allow one to specify that the service only listen on the localhost (loopback interface), which would suffice for this use.
+
+>The echo service may also be something more complicated: perhaps a daemon that monitors a group of ssh tunnels.
+
+>Setting the monitor port to 0 turns the monitoring function off, and autossh will only restart ssh upon ssh's exit. For example, if you are using a recent version of OpenSSH, you may wish to explore using the ServerAliveInterval and ServerAliveCountMax options to have the SSH client exit if it finds itself no longer connected to the server. In many ways this may be a better solution than the monitoring port. 
+
+ということなので、0を指定するとsshがexitした時に再起動します。接続はServerAliveIntervalとServerAliveCountMaxだけ待って応答が来なければexitするので、その場合sshが再起動されるという事でしょう。「この方法がポートモニタするより良い方法だ」といっているので、そうすることにします。
+
+sshのデフォルト[設定](http://www.unixuser.org/~euske/doc/openssh/jman/ssh_config.html)では`ServerAliveInterval`は0になっている(確認のメッセージを送らない）ようなので、適宜設定する必要があります。  
+これがまたちょっと厄介ですね。あまり頻繁にパケットを送ると電話回線などプレミアムな回線を使っているときにコストがかさみます。本来はきちんとTPOで設定する必要があると思いますが、とりあえず30秒ぐらいに設定しておきます。
+
+
+```sh configに追記
+#  connection alive detecting. 30 x 3 [s]
+#
+ServerAliveInterval	30
+ServerAliveCountMax	3
+
+```
+
+`ServerAliveCountMax`は3がデフォルトのようですので、応答がなくなったあと1分30秒で切断されるようになります。
+
+
+これで、ちゃんと接続できるか確認してみます。
+
+```sh
+$ ps ax | grep 'ssh'
+ 6543 ?        Ss     0:00 /usr/lib/autossh/autossh -M0 -N Broker
+ 6544 ?        S      0:00 /usr/bin/ssh -N Broker
+
+$ mosquitto_sub -v -p 22883 -t '$SYS/#'
+$SYS/broker/version mosquitto version 1.3.5
+$SYS/broker/timestamp 2014-10-18 21:06:44+0100
+ :
+ :
+```
+
+Okですね。
+さらに、keepalive確認のパケットがどのように出ているか確認してみます。
+
+IPアドレスは下記のようになっています。  
+192.168.0.XXX クライアント  
+192.168.0.YYY サーバ  
+
+
+```sh Keep Alive packets example
+No.     Time        Source                Destination           Protocol Length Info
+      1 0.000000    192.168.0.XXX         192.168.0.YYY           TCP      130    41387 > SSHPORT　 [PSH, ACK] 
+      2 0.010903    192.168.0.YYY         192.168.0.XXX           TCP      98     SSHPORT > 41387 [PSH, ACK] 
+      3 0.010941    192.168.0.XXX         192.168.0.YYY           TCP      66     41387 > SSHPORT [ACK] 
+      4 30.039772   192.168.0.XXX         192.168.0.YYY           TCP      130    41387 > SSHPORT [PSH, ACK]
+      5 30.043964   192.168.0.YYY         192.168.0.XXX           TCP      98     SSHPORT > 41387 [PSH, ACK]
+      6 30.044004   192.168.0.XXX         192.168.0.YYY           TCP      66     41387 > SSHPORT [ACK]
+
+```
+30秒ごとに何かしらのパケットをやり取りしていることがわかりました。設定通りです。
+
+さらに、途中で回線を切断してみます。
+
+```sh Packet example (in case of disconnection)
+No.     Time        Source                Destination           Protocol Length Info
+#　正常なalive確認のパケットやり取り
+      1 0.000000    192.168.0.XXX         192.168.0.YYY         TCP      130    41405 > SSHPORT [PSH, ACK]
+      2 0.002137    192.168.0.YYY         192.168.0.XXX         TCP      66     SSHPORT > 41405 [ACK]
+      3 0.002566    192.168.0.YYY         192.168.0.XXX         TCP      98     SSHPORT > 41405 [PSH, ACK]  
+      4 0.041204    192.168.0.XXX         192.168.0.YYY         TCP      66     41405 > SSHPORT [ACK] 
+
+#　ここで回線を切断　sshがシャットダウンするまで130秒ぐらい待ち、回線を復旧させる
+#
+#  sshがautosshによって再起動されて通信を開始
+
+# 切断前のコネクションをリセット
+      5 138.686269  192.168.0.XXX         192.168.0.YYY         TCP      258    41405 > SSHPORT [FIN, PSH, ACK]
+      6 138.687686  192.168.0.YYY         192.168.0.XXX         TCP      98     SSHPORT > 41405 [PSH, ACK] 
+      7 138.687721  192.168.0.XXX         192.168.0.YYY         TCP      54     41405 > SSHPORT [RST] 
+      8 138.689209  192.168.0.YYY         192.168.0.XXX         TCP      130    SSHPORT > 41405 [FIN, PSH, ACK] 
+      9 138.689233  192.168.0.XXX         192.168.0.YYY         TCP      54     41405 > SSHPORT [RST] 
+
+#　新たなコネクションのスタート
+     10 148.955582  192.168.0.XXX         192.168.0.YYY         TCP      74     41407 > SSHPORT [SYN]
+     11 148.958766  192.168.0.YYY         192.168.0.XXX         TCP      74     SSHPORT > 41407 [SYN, ACK] 
+```
+
+という感じになりました。何回か試して見ましたが、切断前のコネクションをリセットするやり取りがない場合が多いかもしれません。さらに、alive確認のパケットは2往復でなく1往復半という事もありました。
+
+無事sshの再起動も確認出来ました。
+
+接続確認のためのパケットのサイズは、今回の実験では360byteぐらいでした。もしこの設定（30秒に1回）だとすると1日で1Mbyteぐらいの通信量です。
+最近の安いデータ通信用のSIMにとってみれば大したデータ量ではないかもしれませんね。
+
