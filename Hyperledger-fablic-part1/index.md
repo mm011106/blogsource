@@ -1,6 +1,7 @@
 ---
-title: Hyperledger fablic part1
+title: Hyperledger fablic Doc - keyconcept- introduction
 date: 2017-09-12 21:51:55
+categories: blockchain, fablic
 ---
 
 ---
