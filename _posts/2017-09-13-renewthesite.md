@@ -39,6 +39,7 @@ octpressでは新しいブログ原稿だけを選択的に変換するという
 サイズ指定する必要があれば、
 <img src="/image/01_s.jpg" alt="iPhone X" title="cell phone" width="100">
 
+指定方法：
 `
 <img src="/image/01_s.jpg" alt="iPhone X" title="cell phone" width="100">
 `
