@@ -76,6 +76,11 @@ git push -u origin master
 使うとき（読み込み）は
 ` git pull origin master `
 
+push の時に　-u　オプションをつけると、そのブランチを覚えているので、
+`git pull`
+だけでいい。
+
+
 リモートリポジトリを更新したい時（保存）は
 ```
 git add .
