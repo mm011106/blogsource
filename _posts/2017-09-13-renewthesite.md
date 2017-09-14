@@ -1,7 +1,9 @@
 ---
 title: "HTMLジェネレータを新しくしました"
 date: 2017-09-13 20:35:25
-tags: 
+tags: hexo
+categories: hexo, git
+
 ---
 
 今までoctpressを使っていましたが、HTMLジェネレータを新しくしました。
@@ -22,7 +24,7 @@ octpressでは新しいブログ原稿だけを選択的に変換するという
 ## 細かいところがわからない
 使い始めたばかりなので、写真を入れたりテーマのバックグラウンドの写真を変更したりとか、細かいカスタマイズポイントがわかっていません。おいおい調べて行きたいと思います。
 
-写真の挿入
+## 写真の挿入
 
 ![iPhone X](/blog/image/01_s.jpg "cell phone")
 hexo のブログソースのフォルダ(/source)の中に./image/というディレクトリを作ってその中に絵をおく。
@@ -41,3 +43,24 @@ hexo のブログソースのフォルダ(/source)の中に./image/というデ�
 `
 
 このブログはweb server ドキュメントルート直下ではなく/blogの下にあるのでイメージファイルのディレクトリは'/blog/image/'となる。
+
+## ブログソースの保管
+gitにやってもらう。
+
+sourceディレクトリに移動して
+
+```shell-session:git
+git config --global user.email メールアドレス
+git config --global user.name ユーザ名
+git add .
+git commit -m "first update"
+git remote add origin リモートリポジトリURLを指定
+git push -u origin master
+```
+
+使うときは
+` git pull `
+
+  
+
+
