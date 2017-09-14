@@ -73,7 +73,7 @@ git push -u origin master
 ```
 
 使うとき（読み込み）は
-` git pull `
+` git pull origin master `
 
 リモートリポジトリを更新したい時（保存）は
 ```
