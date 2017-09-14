@@ -26,7 +26,27 @@ octpressでは新しいブログ原稿だけを選択的に変換するという
 
 ## 写真の挿入
 
-![iPhone X](/blog/image/01_s.jpg "cell phone")
+![iPhone X](/image/01_s.jpg "cell phone")
+
+
+指定方法：
+`
+	![iPhone X](/image/01_s.jpg "cell phone")
+`
+
+
+ただ、サイズ指定はできない。
+サイズ指定する必要があれば、
+<img src="/image/01_s.jpg" alt="iPhone X" title="cell phone" width="100">
+
+`
+<img src="/image/01_s.jpg" alt="iPhone X" title="cell phone" width="100">
+`
+
+
+server ドキュメントルート直下ではなく、サブディレクトリの下、例えば/blogの下にあればイメージファイルのディレクトリは'/blog/image/'となる。
+
+
 hexo のブログソースのフォルダ(/source)の中に./image/というディレクトリを作ってその中に絵をおく。
 それを
 `
@@ -34,15 +54,6 @@ hexo のブログソースのフォルダ(/source)の中に./image/というデ�
 `
 のように指定すればｏｋ．
 
-ただ、サイズ指定はできない。
-サイズ指定する必要があれば、
-<img src="/blog/image/01_s.jpg" alt="iPhone X" title="cell phone" width="100">
-
-`
-<img src="/blog/image/01_s.jpg" alt="iPhone X" title="cell phone" width="100">
-`
-
-このブログはweb server ドキュメントルート直下ではなく/blogの下にあるのでイメージファイルのディレクトリは'/blog/image/'となる。
 
 ## ブログソースの保管
 gitにやってもらう。
